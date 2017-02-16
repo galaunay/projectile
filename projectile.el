@@ -1152,7 +1152,12 @@ fallback to `shell-command-to-string'."
           (apply 'projectile-call-process-to-string binary-path args)
         (shell-command-to-string command)))))
 
-(defun projectile-check-vcs-status (&optional PROJECT-PATH)
+(defvar projectile-dirty-projects-status nil
+  "List of dirty version controlled projects status, used by
+`projectile-recall-dirty-projects' to avoid possibly long
+dirty projects search")
+
+(defun projectile--check-vcs-status (&optional PROJECT-PATH)
   "Check the status of the current project.
 If PROJECT-PATH is a project, check this one instead."
   (let* ((PROJECT-PATH (or PROJECT-PATH (projectile-project-root)))
@@ -1171,7 +1176,7 @@ If PROJECT-PATH is a project, check this one instead."
       (kill-buffer)
       project-status)))
 
-(defun projectile-check-vcs-status-of-known-projects ()
+(defun projectile--check-vcs-status-of-known-projects ()
   "Return the list of dirty projects.
 The list is composed of sublists~: (project-path, project-status).
 Raise an error if their is no dirty project."
@@ -1180,25 +1185,47 @@ Raise an error if their is no dirty project."
         (tmp-status nil))
     (dolist (project projects)
       (condition-case nil
-          (setq tmp-status (projectile-check-vcs-status project))
+          (setq tmp-status (projectile--check-vcs-status project))
         (error nil))
       (when tmp-status
         (setq status (cons (list project tmp-status) status))))
-    (when (= (length status) 0)
-      (message "No dirty projects have been found"))
-    status))
+    (setq projectile-dirty-projects-status status)))
 
 (defun projectile-browse-dirty-projects ()
   "Browse dirty version controlled projects."
   (interactive)
-  (let ((status nil)
+  (message "Checking for modifications in known projects...")
+  (let ((status (projectile--check-vcs-status-of-known-projects))
         (mod-proj nil))
-    (message "Checking for modifications in known projects...")
-    (setq status (projectile-check-vcs-status-of-known-projects))
+    (if (not status)
+        (message "No dirty projects found")
+      (while (not (= (length status) 0))
+        (setq mod-proj (cons (car (pop status)) mod-proj)))
+      (let ((select-proj (projectile-completing-read "Select project: " mod-proj)))
+        (when select-proj
+          (projectile-vc select-proj))))))
+
+(defun projectile-recall-dirty-projects ()
+  "Recall the last list of dirty version controlled projects
+found by `projectile-browser-dirty-projects'"
+  (interactive)
+  (let ((status projectile-dirty-projects-status)
+        (mod-proj nil))
+    ;; check the dirty projects again
+    (message "Checking for modifications in previous dirty projects...")
     (while (not (= (length status) 0))
       (setq mod-proj (cons (car (pop status)) mod-proj)))
-    (projectile-vc
-     (projectile-completing-read "Select project: " mod-proj))))
+    (let ((projectile-known-projects mod-proj))
+      (setq status (projectile--check-vcs-status-of-known-projects)))
+    ;; ask
+    (if (not status)
+        (message "No previous dirty projects found")
+      (setq mod-proj nil)
+      (while (not (= (length status) 0))
+        (setq mod-proj (cons (car (pop status)) mod-proj)))
+      (let ((select-proj (projectile-completing-read "Select project: " mod-proj)))
+        (when select-proj
+          (projectile-vc select-proj))))))
 
 (defun projectile-files-via-ext-command (command)
   "Get a list of relative file names in the project root by executing COMMAND."
